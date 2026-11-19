@@ -1,0 +1,18 @@
+# Linux x86_64 NVIDIA server override. Use together with compose.yaml.
+services:
+  api:
+    image: fundus-ai:gpu
+    platform: linux/amd64
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+    environment:
+      FUNDUS_DEVICE: cuda
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

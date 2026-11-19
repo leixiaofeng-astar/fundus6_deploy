@@ -1,0 +1,12 @@
+# Shared CPU/GPU application versions. Torch/torchvision are installed separately
+# from the official CPU or CUDA index by Dockerfile build arguments.
+timm==1.0.28
+numpy==2.2.6
+pillow==12.0.0
+fastapi==0.124.0
+starlette==0.50.0
+pydantic==2.12.5
+uvicorn==0.38.0
+python-multipart==0.0.20
+pydicom==3.0.1
+httpx==0.28.1

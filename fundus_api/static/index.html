@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fundus AI · Image analysis</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#182f42;background:#f0f5f7}body{margin:0}main{max-width:1120px;margin:40px auto;padding:0 24px}header{display:flex;align-items:center;gap:14px}header b{background:#077e83;color:white;border-radius:14px;padding:14px;font-size:22px}header .heading{flex:1}h1{font-size:28px;margin:0}p{color:#587082;line-height:1.7}.language{min-width:115px}.language label{margin:0 0 5px;font-size:13px}select{background:white;color:#182f42;padding:9px;border:1px solid #c9d6dd;border-radius:8px;font:inherit}.grid{display:grid;grid-template-columns:350px minmax(0,1fr);gap:24px;margin-top:26px}.card{background:white;padding:26px;border:1px solid #d9e4e9;border-radius:18px}h2{font-size:21px}label{display:block;font-weight:600;margin:15px 0 8px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #c9d6dd;border-radius:8px}button{background:#087e83;color:white;border:0;border-radius:9px;padding:14px;width:100%;font-size:16px;margin-top:20px;cursor:pointer}button:disabled{opacity:.5;cursor:wait}img{width:100%;max-height:260px;object-fit:contain;margin-top:18px;border-radius:10px}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:14px 7px;border-bottom:1px solid #e6ecef}th{color:#587082}td:first-child{width:58%}.positive{color:#a74b10;font-weight:700}.negative{color:#087e83}.quality{padding:16px;background:#edf7f6;border-radius:10px;margin:18px 0;line-height:1.7}.quality.poor{background:#fff2e6;border-left:5px solid #bf6512;color:#834209;font-weight:600}.quality-warning{color:#834209;background:#fff8ef;padding:12px 16px;border-radius:8px}.preview-frame{position:relative}.preview-frame.ungradable img{outline:3px solid #bf6512;outline-offset:2px}.preview-badge{position:absolute;top:28px;right:8px;background:#984509;color:white;padding:6px 10px;border-radius:6px;font-size:13px;font-weight:700}.footer-links{display:flex;align-items:center;gap:28px;flex-wrap:wrap;margin-top:18px}.footer-action{background:none;border:0;padding:0;margin:0;width:auto;color:#087e83;font:inherit;text-decoration:underline;cursor:pointer}.api-response{margin-top:20px;background:white;border:1px solid #d9e4e9;border-radius:12px;padding:20px}.api-response pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:520px;overflow:auto}.error{color:#ae2929}#empty{padding:70px 0;text-align:center;color:#79909f}small{color:#587082;line-height:1.7}#ids{white-space:pre-line;overflow-wrap:anywhere;font-size:12px}a{color:#087e83}#status{overflow-wrap:anywhere}@media(max-width:800px){.grid{grid-template-columns:1fr}main{margin:24px auto}header{flex-wrap:wrap}h1{font-size:24px}th,td{padding:12px 4px}}
+</style>
+</head>
+<body><main>
+<header><b aria-hidden="true">AI</b><div class="heading"><h1 data-i18n="title">Fundus image analysis</h1><small data-i18n="subtitle">MerMED-6 · Six-disease screening and image quality assessment</small></div><div class="language"><label for="language" data-i18n="language">Language</label><select id="language"><option value="en" selected>English</option><option value="zh">中文</option></select></div></header>
+<p data-i18n="intro">Upload a single-eye fundus image. Image quality is checked before six independent disease predictions are displayed.</p>
+<div class="grid"><section class="card"><h2 data-i18n="uploadTitle">Upload image</h2><form id="form"><label for="file" data-i18n="fileLabel">Fundus image / DICOM</label><input id="file" type="file" accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff,.dcm,.dicom" required><small data-i18n="limits">Single-frame images · Up to 20 MiB and 25 megapixels</small><label for="key" data-i18n="keyLabel">API key (if enabled)</label><input id="key" type="password" autocomplete="off" placeholder="Enter the API key configured on the server"><div id="previewFrame" class="preview-frame"><img id="preview" hidden alt="Uploaded fundus image preview"><span id="previewBadge" class="preview-badge" hidden data-i18n="ungradableBadge">Ungradable</span></div><button id="submit" data-i18n="analyze">Upload and analyze</button></form><p id="status" role="status" aria-live="polite"></p><small data-i18n="privacy">The image is uploaded to this server for analysis. The API key stays in this page only.</small></section>
+<section class="card"><h2 data-i18n="resultsTitle">Analysis results</h2><div id="empty" data-i18n="empty">Choose an image and select “Upload and analyze”.</div><div id="result" hidden><div id="quality" class="quality" role="status"></div><p id="qualityWarning" class="quality-warning" hidden data-i18n="qualityWarning"></p><div style="overflow:auto"><table id="table"><thead><tr><th data-i18n="disease">Disease</th><th data-i18n="probability">Probability</th><th data-i18n="finding">Result</th></tr></thead><tbody id="rows"></tbody></table></div><p id="ids"></p></div></section></div>
+<p><small data-i18n="disclaimer">For research only. This is not a diagnosis or a medical device. DR and AMD are not graded. DME should be assessed alongside OCT. Disease probabilities are independent and do not sum to 1.</small></p><footer class="footer-links"><a href="/docs" data-i18n="apiDocs">REST API documentation ↗</a><button id="responseToggle" type="button" class="footer-action" aria-expanded="false" aria-controls="apiResponse" data-i18n="apiResponse">REST API response</button></footer>
+<section id="apiResponse" class="api-response" hidden aria-labelledby="responseTitle"><h2 id="responseTitle" data-i18n="apiResponse">REST API response</h2><pre id="rawResponse" tabindex="0"></pre></section>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const translations = {
+  en: {
+    pageTitle:'Fundus AI · Image analysis', title:'Fundus image analysis',
+    subtitle:'MerMED-6 · Six-disease screening and image quality assessment', language:'Language',
+    intro:'Upload a single-eye fundus image. Image quality is checked before six independent disease predictions are displayed.',
+    uploadTitle:'Upload image', fileLabel:'Fundus image / DICOM', limits:'Single-frame images · Up to 20 MiB and 25 megapixels',
+    keyLabel:'API key (if enabled)', keyPlaceholder:'Enter the API key configured on the server', previewAlt:'Uploaded fundus image preview',
+    analyze:'Upload and analyze', privacy:'The image is uploaded to this server for analysis. The API key stays in this page only.',
+    resultsTitle:'Analysis results', empty:'Choose an image and select “Upload and analyze”.', disease:'Disease', probability:'Probability', finding:'Result',
+    positive:'Positive', negative:'Negative', quality:'Image quality', gradable:'Gradable', ungradable:'Ungradable — predictions shown with a quality warning', poorProbability:'Poor-quality probability',
+    processing:'Uploading and checking image quality and model predictions…', completed:'Analysis complete.', completedWarning:'Analysis complete — ungradable image.', qualityWarning:'Analysis complete. The image is ungradable; predictions are displayed but may be unreliable. Please retake the image.',
+    tooLarge:'The file exceeds the 20 MiB limit.', invalidImage:'The image is invalid or unsupported. Use a supported single-frame image or DICOM.',
+    unauthorized:'The API key is missing or invalid.', busy:'The server is busy. Please try again.', modelError:'Analysis failed on the server. Please try again or contact the service administrator.',
+    networkError:'Could not reach the API. Check the connection and try again.', requestError:'The request failed. Please try again.',
+    imageId:'Image ID', predictionId:'Prediction ID', apiDocs:'REST API documentation ↗', apiResponse:'REST API response', noResponse:'Upload and analyze an image to view the complete API JSON response.', ungradableBadge:'Ungradable',
+    disclaimer:'For research only. This is not a diagnosis or a medical device. DR and AMD are not graded. DME should be assessed alongside OCT. Disease probabilities are independent and do not sum to 1.',
+    diseases:{dr:'Diabetic retinopathy',glaucoma:'Glaucoma',amd:'Age-related macular degeneration',myopia:'Pathologic myopia',cataract:'Cataract',dme:'Diabetic macular edema'}
+  },
+  zh: {
+    pageTitle:'眼底 AI · 图像分析', title:'眼底图像分析', subtitle:'MerMED-6 · 六病筛查与图像质量检查', language:'语言',
+    intro:'上传单眼眼底图像，先检查图像质量，再显示六个独立疾病预测。', uploadTitle:'上传图像',fileLabel:'眼底图像 / DICOM',limits:'单帧图像 · 最大 20 MiB / 2500 万像素',
+    keyLabel:'API Key（如已启用）',keyPlaceholder:'填写服务端配置的 API Key',previewAlt:'上传的眼底图像预览',analyze:'上传并分析',
+    privacy:'图像将上传至当前服务器进行分析。API Key 仅保留在当前页面中。',resultsTitle:'分析结果',empty:'选择图像后点击「上传并分析」。',disease:'疾病',probability:'概率',finding:'判断',
+    positive:'阳性',negative:'阴性',quality:'图像质量',gradable:'可判读',ungradable:'不可判读（Ungradable），仍显示预测结果',poorProbability:'低质量概率',
+    processing:'正在上传并进行质量检查与模型推理…',completed:'分析完成。',completedWarning:'分析完成，图像不可判读。',qualityWarning:'分析已完成。图像不可判读，仍显示预测结果，但结果可能不可靠，建议重新拍摄。',tooLarge:'文件超过 20 MiB。',
+    invalidImage:'图像无效或格式不受支持，请使用支持的单帧图像或 DICOM。',unauthorized:'API Key 缺失或无效。',busy:'服务器繁忙，请稍后重试。',
+    modelError:'服务器分析失败，请重试或联系服务管理员。',networkError:'无法连接 API，请检查网络后重试。',requestError:'请求失败，请重试。',
+    imageId:'图像 ID',predictionId:'预测 ID',apiDocs:'REST API 文档 ↗', apiResponse:'REST API 响应', noResponse:'上传并分析图像后，可在此查看完整 API JSON 响应。', ungradableBadge:'不可判读 · Ungradable',
+    disclaimer:'仅供研究，不是诊断或医疗器械。DR 和 AMD 不提供分级。DME 建议结合 OCT。各病概率独立，不相加为 1。',
+    diseases:{dr:'糖尿病视网膜病变',glaucoma:'青光眼',amd:'年龄相关黄斑变性',myopia:'病理性近视',cataract:'白内障',dme:'糖尿病黄斑水肿'}
+  }
+};
+let language='en', previewUrl, output=null, statusKey='', failed=false;
+const text = key => translations[language][key];
+function renderResult() {
+  $('result').hidden = !output;
+  $('rawResponse').textContent=output?JSON.stringify(output,null,2):text('noResponse');
+  const ungradable=Boolean(output&&!output.quality.gradable);
+  $('previewFrame').classList.toggle('ungradable',ungradable);
+  $('previewBadge').hidden=!ungradable||$('preview').hidden;
+  $('qualityWarning').hidden=!ungradable;
+  if (!output) return;
+  const q=output.quality;
+  $('quality').setAttribute('role',q.gradable?'status':'alert');
+  $('quality').textContent=`${text('quality')}: ${text(q.gradable?'gradable':'ungradable')} · ${text('poorProbability')} ${(q.poor_quality_probability*100).toFixed(2)}%`;
+  $('quality').className=q.gradable?'quality':'quality poor';
+  $('rows').replaceChildren();
+  for (const [name,d] of Object.entries(output.diseases||{})) {
+    const tr=document.createElement('tr');
+    [translations[language].diseases[name]||name,(d.probability*100).toFixed(2)+'%',text(d.positive?'positive':'negative')].forEach((value,i)=>{
+      const td=document.createElement('td');td.textContent=value;
+      if(i===2)td.className=d.positive?'positive':'negative';tr.append(td);
+    });
+    $('rows').append(tr);
+  }
+  $('table').hidden=!output.diseases;
+  $('ids').textContent=`${text('imageId')}: ${output.image_id}\n${text('predictionId')}: ${output.prediction_id}`;
+}
+function renderLanguage() {
+  document.documentElement.lang=language==='zh'?'zh-CN':'en';document.title=text('pageTitle');
+  document.querySelectorAll('[data-i18n]').forEach(node=>{node.textContent=text(node.dataset.i18n);});
+  $('key').placeholder=text('keyPlaceholder');$('preview').alt=text('previewAlt');
+  $('status').textContent=statusKey?text(statusKey):'';$('status').className=failed?'error':'';renderResult();
+}
+function setStatus(key,isError=false){statusKey=key;failed=isError;renderLanguage();}
+$('language').onchange=()=>{language=$('language').value==='zh'?'zh':'en';renderLanguage();};
+$('file').onchange=()=>{
+  if(previewUrl)URL.revokeObjectURL(previewUrl);$('preview').hidden=true;output=null;$('empty').hidden=false;setStatus('');
+  const file=$('file').files[0];
+  if(file&&/\.(jpe?g|png|bmp)$/i.test(file.name)){previewUrl=URL.createObjectURL(file);$('preview').src=previewUrl;$('preview').hidden=false;}
+};
+$('form').onsubmit=async event=>{
+  event.preventDefault();const file=$('file').files[0];if(!file)return;
+  if(file.size>20*1024*1024){setStatus('tooLarge',true);return;}
+  $('submit').disabled=true;$('file').disabled=true;output=null;$('empty').hidden=true;setStatus('processing');
+  try{
+    const data=new FormData();data.append('file',file);const headers={};if($('key').value)headers['X-API-Key']=$('key').value;
+    const response=await fetch('/api/v1/predict',{method:'POST',headers,body:data});
+    if(!response.ok){const errors={401:'unauthorized',413:'tooLarge',422:'invalidImage',500:'modelError',503:'busy'};setStatus(errors[response.status]||'requestError',true);$('empty').hidden=false;return;}
+    output=await response.json();setStatus(output.quality.gradable?'completed':'completedWarning');
+    if(/\.(dcm|dicom|tiff?)$/i.test(file.name)){
+      try{const preview=await fetch(`/api/v1/images/${output.image_id}/preview`,{headers});if(preview.ok){if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=URL.createObjectURL(await preview.blob());$('preview').src=previewUrl;$('preview').hidden=false;renderResult();}}catch{/* Preview failure does not invalidate inference. */}
+    }
+  }catch{output=null;setStatus('networkError',true);$('empty').hidden=false;}
+  finally{$('submit').disabled=false;$('file').disabled=false;}
+};
+$('responseToggle').onclick=()=>{
+  const expanded=$('responseToggle').getAttribute('aria-expanded')!=='true';
+  $('responseToggle').setAttribute('aria-expanded',String(expanded));
+  $('apiResponse').hidden=!expanded;
+};
+renderLanguage();
+</script>
+</body></html>

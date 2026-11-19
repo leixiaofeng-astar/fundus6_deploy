@@ -1,0 +1,45 @@
+name: fundus-ai
+services:
+  api:
+    image: fundus-ai:cpu
+    build:
+      context: .
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    environment:
+      FUNDUS_API_KEY: ${FUNDUS_API_KEY:?Set FUNDUS_API_KEY in .env.docker or your shell}
+      FUNDUS_DEVICE: cpu
+      FUNDUS_DATA_DIR: /data
+      FUNDUS_MODEL_ROOT: /app
+      OMP_NUM_THREADS: ${FUNDUS_CPU_THREADS:-2}
+      MKL_NUM_THREADS: ${FUNDUS_CPU_THREADS:-2}
+    ports:
+      - "${FUNDUS_BIND_ADDRESS:-127.0.0.1}:${FUNDUS_PORT:-5050}:8000"
+    volumes:
+      - type: bind
+        source: ./weights
+        target: /app/weights
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./fundus_IQA
+        target: /app/fundus_IQA
+        read_only: true
+        bind:
+          create_host_path: false
+      - fundus-data:/data
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  fundus-data:

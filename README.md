@@ -1,6 +1,6 @@
 # MerMED-6 眼底 6 病推理
 
-DR / 青光眼 / AMD / 近视 / 白内障 / DME,每个病一个独立二分类头(多标签,概率不加到 1)。
+DR / 青光眼 / AMD / 病理性近视（Pathologic myopia） / 白内障 / DME,每个病一个独立二分类头(多标签,概率不加到 1)。
 模型:ViT-B/16(MerMED-FM 微调),权重 `weights/mermed6_ep41.pth`(= fundus5 的 mermed_v3_dme6/checkpoint-best.pth,ep41)。
 
 ## 1. 环境
@@ -44,12 +44,43 @@ for path, probs in predict(model, ["a.jpg", "b.jpg"], "cuda"):
   | AMD (≥2) | 0.017 | 0.764 / 0.781 / 0.763 | 0.641 / 0.775 / 0.625 |
   | 白内障 | 0.292 | 0.796 / 0.823 / 0.795 | 0.621 / 0.603 / 0.636 |
   | DME | 0.034 | 0.719 / 0.762 / 0.718 | 0.632 / 0.857 / 0.628 |
-  | 近视 (SE≤-6) | 0.010 | 0.671 / 0.671 / 0.672(UKBB,样本内) | — |
+  | 病理性近视（myopia；原评估 SE≤-6） | 0.010 | 0.671 / 0.671 / 0.672(UKBB,样本内) | — |
 
   取 min 最大意味着 Sen ≈ Spe,低患病率下 Acc 会比"全判阴性"低(全判阴性在 SIDRP 上 Acc 0.96–0.98 但 Sen=0,没有意义)。
   阈值依赖人群患病率:换到高/低患病率场景(如筛查 vs 转诊)请重新校准,或用 `--thr` 改。
   计算脚本与完整结果:fundus5/scripts/fix_thr.py、fundus5/doc/fixed_thr.md。
 - **DR / AMD**:模型只给"有没有",不分级;SIDRP 评测口径是 ≥2 级。
-- **近视**:头对应高度近视(UKBB SE≤-6 口径),不是屈光近视或病理性近视的通用判断。
+- **病理性近视（Pathologic myopia；JSON 字段: `myopia`）**：名称与 UI 和文档一致。原性能表的 myopia 评估依据为 UKBB SE≤-6，保留该技术口径；此次名称同步沿用原权重和阈值。
 - **DME**:眼底照上的 DME 本身较难,建议结合 OCT。
 - 仅供研究,不是诊断/医疗器械。
+
+## REST API and Docker deployment
+
+The six-disease CLI is also available through a REST API and an English/Chinese web UI. See [README_API.md](README_API.md) for the API contract and [README_DOCKER.md](README_DOCKER.md) for CPU/GPU Docker deployment, API-key configuration, persistent storage and curl smoke tests.
+
+
+## Docker quick start and API test
+
+Run from the deployment root. CPU and GPU are alternative modes on the same default host port 5050. Generate the private Docker env file once, then select one startup command:
+
+```bash
+python3 scripts/init_docker_env.py
+# CPU
+docker compose --env-file .env.docker up -d --build --wait
+# NVIDIA GPU server instead of CPU
+docker compose --env-file .env.docker \
+  -f compose.yaml -f compose.gpu.yaml up -d --build --wait
+```
+
+Use the configured `FUNDUS_API_KEY` as TOKEN; the UI takes the key value without a Bearer prefix. The JSON field `myopia` is displayed as **Pathologic myopia / 病理性近视**. The separate 8056 preview uses a different credential.
+
+```bash
+export API_BASE=http://127.0.0.1:5050
+export TOKEN='paste-your-FUNDUS_API_KEY-value-here'
+curl --fail-with-body -sS --max-time 120 \
+  "$API_BASE/api/v1/predict" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@samples/FOJ-1000_L.jpg"
+```
+
+See [README_DOCKER.md](README_DOCKER.md) for requirements, GPU validation, persistent volumes and lifecycle commands. Ungradable images still return all six disease predictions with a quality warning.
