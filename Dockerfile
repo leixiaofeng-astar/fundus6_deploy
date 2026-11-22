@@ -28,7 +28,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip==25.3 \
 COPY infer.py ./infer.py
 COPY fundus_api/ ./fundus_api/
 COPY samples/ ./samples/
-COPY scripts/smoke_test_api.sh ./scripts/smoke_test_api.sh
+COPY scripts/smoke_test_api.sh scripts/predict_no_save.sh ./scripts/
 COPY docker/entrypoint.py /app/docker-entrypoint.py
 # Import checks run at build time without loading checkpoints or accessing GPUs.
 RUN python -c "import torch, torchvision, timm, pydicom; from fundus_api.app import app; assert app"

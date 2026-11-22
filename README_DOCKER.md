@@ -125,8 +125,8 @@ The current authentication model is one service credential. `owner` and `patient
 Docker Compose creates the named volume `fundus-ai_fundus-data` and mounts it at `/data`:
 
 ```text
-/data/<image UUID>/original       uploaded bytes
-/data/<image UUID>/image.png      normalized RGB inference image
+/data/<image UUID>/<source stem>__original.<ext>  uploaded bytes
+/data/<image UUID>/<source stem>__image.png       normalized RGB image
 /data/index.sqlite3              image index, predictions and submissions
 ```
 
@@ -208,3 +208,48 @@ Validated on 19 November 2026: the CPU image built successfully on Docker Deskto
 The English Word user guide and system design now include the same CPU/GPU Compose startup commands and external curl example used here. The default external address is `http://127.0.0.1:5050`; container-only smoke tests use `http://127.0.0.1:8000`. The legacy preview address `http://127.0.0.1:8056` and its short preview key are not Docker defaults. Patient uploads persist in `/data`, model mounts remain read-only, and ungradable images continue to return all six disease predictions.
 
 The documentation review on 19 November 2026 checked all three READMEs and both English Word documents: disease display naming, 36 shell command blocks, CPU/GPU effective Compose configurations, CPU startup, both Word curl examples against the real Docker service, and the in-container smoke test. External port 5050, internal port 8000, credentials and advisory IQA behavior agree with the implementation. NVIDIA execution remains a target-server validation step.
+
+
+## Upload filenames and no save inference
+
+Image IDs still use UUID v4. New persisted uploads keep the original name in their filenames, for example:
+
+```text
+<data root>/<image UUID>/
+  2026-08-04-14-01-20-722_OS__original.jpg
+  2026-08-04-14-01-20-722_OS__image.png
+```
+
+`filename` is the source basename. `stored_original_filename` and `stored_image_filename` report the actual saved names. Path separators/unsafe characters are sanitized and long names are shortened. Existing UUID directories and older `original` / `image.png` files remain supported; existing IDs are unchanged and files are not renamed retrospectively.
+
+`POST /api/v1/predict` still saves the image and result. For **no persistent image or result storage**, use the new endpoint:
+
+```bash
+export API_BASE=http://18.138.92.89:8056
+export TOKEN='your-server-credential'
+curl --fail-with-body -sS --max-time 120 \
+  "$API_BASE/api/v1/predict/no-save" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./2026-08-04-14-01-20-722_OS.jpg"
+```
+
+This is one upload/inference request, with no image-ID application. The response includes `saved: false`, `image_id: null`, `prediction_id: null`, the source `filename`, IQA and the six disease outputs. There is no database insert and no result-retrieval ID. Models and quality-warning behavior are the same as the persisted endpoint. The API uses default thresholds; authentication, 20 MiB upload limits, DICOM decoding and 25-megapixel limits still apply.
+
+Temporary working files (and multipart spooling when required) may be written to the server's temporary directory. They are cleaned at the end of the request, including decoding/inference failures. This is not a RAM-only processing guarantee; it is a no-retention endpoint. As with normal temporary files, an OS crash or forced process termination cannot guarantee immediate cleanup.
+
+A ready-to-run script combines the entire operation:
+
+```bash
+API_BASE=http://18.138.92.89:8056 TOKEN='your-server-credential' \
+  bash scripts/predict_no_save.sh ./2026-08-04-14-01-20-722_OS.jpg
+```
+
+The remote examples require the updated server deployment. For local Docker, set API_BASE=http://127.0.0.1:5050 instead. Rebuild/recreate the container after copying the updated code to the server:
+
+```bash
+docker compose --env-file .env.docker up -d --build --wait
+# NVIDIA GPU alternative:
+docker compose --env-file .env.docker \
+  -f compose.yaml -f compose.gpu.yaml up -d --build --wait
+```
+

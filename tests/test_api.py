@@ -163,6 +163,70 @@ class APITests(unittest.TestCase):
         with self.app.state.store.db() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM predictions').fetchone()[0], 0)
 
+    def test_named_upload_and_duplicate_filenames(self):
+        ids = []
+        for _ in range(2):
+            response = self.client.post('/api/v1/images', headers=self.headers,
+                files={'file': ('2026-08-04-14-01-20-722_OS.jpg', image_bytes())})
+            self.assertEqual(response.status_code, 201, response.text)
+            info = response.json(); ids.append(info['image_id'])
+            from uuid import UUID
+            self.assertEqual(UUID(info['image_id']).version, 4)
+            self.assertEqual(info['stored_original_filename'], '2026-08-04-14-01-20-722_OS__original.jpg')
+            self.assertEqual(info['stored_image_filename'], '2026-08-04-14-01-20-722_OS__image.png')
+            directory = Path(self.temp.name)/info['image_id']
+            self.assertEqual(set(p.name for p in directory.iterdir()),
+                {info['stored_original_filename'], info['stored_image_filename']})
+            self.assertEqual(self.client.get('/api/v1/images/'+info['image_id']+'/preview', headers=self.headers).status_code, 200)
+        self.assertNotEqual(*ids)
+
+    def test_filename_safety_and_old_storage_compatibility(self):
+        from fundus_api.app import upload_names
+        for name in ['../../escape.jpg', r'C:\folder\eye.jpg', '../', '图像'*150+'.png']:
+            _, original, normalized = upload_names(name)
+            for saved in [original, normalized]:
+                self.assertNotIn('/', saved); self.assertNotIn('\\', saved)
+                self.assertLess(len(saved.encode('utf-8')), 255)
+        old_id = str(uuid4()); directory = Path(self.temp.name)/old_id
+        directory.mkdir(); (directory/'image.png').write_bytes(image_bytes())
+        with self.app.state.store.db() as db:
+            db.execute('INSERT INTO images VALUES (?,?)', (old_id,json.dumps({'image_id':old_id,'filename':'old.jpg'})))
+        self.assertEqual(self.app.state.store.path(old_id), directory/'image.png')
+        self.assertEqual(self.client.get('/api/v1/images/'+old_id+'/preview',headers=self.headers).status_code,200)
+
+    def test_no_save_cleans_files_and_does_not_persist(self):
+        from unittest.mock import patch
+        seen = []
+        with patch.object(self.app.state.models, 'predict', wraps=self.models.predict) as model:
+            # Capture the transient path while keeping normal fake model output.
+            original = model._mock_wraps
+            model.side_effect = lambda path, ts, iq: (seen.append(Path(path)), original(path,ts,iq))[1]
+            response=self.client.post('/api/v1/predict/no-save',headers=self.headers,files={'file':('eye.jpg',image_bytes())})
+        self.assertEqual(response.status_code,200,response.text)
+        output=response.json(); self.assertFalse(output['saved'])
+        self.assertIsNone(output['image_id']); self.assertIsNone(output['prediction_id'])
+        self.assertIn('dr',output['diseases'])
+        self.assertTrue(seen); self.assertFalse(seen[0].parent.exists())
+        with self.app.state.store.db() as db:
+            for table in ['images','predictions','submissions']:
+                self.assertEqual(db.execute('SELECT count(*) FROM '+table).fetchone()[0],0)
+        self.assertFalse(any(p.is_dir() for p in Path(self.temp.name).iterdir()))
+
+    def test_no_save_failure_cleanup_and_auth(self):
+        from unittest.mock import patch
+        from tempfile import TemporaryDirectory as RealTemporaryDirectory
+        directories=[]
+        def temporary(*args,**kwargs):
+            manager=RealTemporaryDirectory(*args,**kwargs);directories.append(Path(manager.name));return manager
+        for kind in ['bad-image','model-failure','too-large']:
+            payload=b'bad' if kind=='bad-image' else b'x'*(20*1024*1024+1) if kind=='too-large' else image_bytes()
+            with patch('fundus_api.app.TemporaryDirectory',side_effect=temporary), patch.object(self.models,'predict',side_effect=RuntimeError('failure')):
+                response=self.client.post('/api/v1/predict/no-save',headers=self.headers,files={'file':('eye.jpg',payload)})
+            self.assertEqual(response.status_code, {'bad-image':422,'model-failure':500,'too-large':413}[kind])
+        self.assertTrue(directories);self.assertTrue(all(not d.exists() for d in directories))
+        response=self.client.post('/api/v1/predict/no-save',files={'file':('eye.jpg',image_bytes())})
+        self.assertEqual(response.status_code,401)
+
     def test_web_and_schema(self):
         self.assertEqual(self.client.get('/').status_code, 200)
         self.assertIn('/api/v1/prediction', self.client.get('/openapi.json').json()['paths'])

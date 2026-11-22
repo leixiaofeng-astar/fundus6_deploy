@@ -47,6 +47,7 @@ python -m uvicorn fundus_api.app:app --host 127.0.0.1 --port 5050 --workers 1 --
 | GET | `/api/v1/images/{image_id}/preview` | 已转换的 PNG，需认证 |
 | POST | `/api/v1/predictions` | 新接口：单眼 ID 推理，可覆盖疾病及 IQA 阈值 |
 | GET | `/api/v1/predictions/{prediction_id}` | 取回单眼结果 |
+| POST | `/api/v1/predict/no-save` | 上传即推理，不持久保存图片/结果，不申请 ID |
 | POST | `/api/v1/predict` | 一步上传 `file` 并返回模型输出，无需申请 ID |
 | GET | `/health` | 模型加载成功后返回 ready |
 
@@ -146,7 +147,7 @@ IQA 保留 `fundus_IQA/test_iqa.py` 的 ViT 包装、ImageNet 标准化、224×2
 
 - 输入 JPG、PNG、BMP、单帧 TIFF，以及单帧 DICOM；原始文件上限 20 MiB、像素上限 2500 万。请求整体大小在 multipart 解析前限额，Base64 允许约 29 MiB 请求体；无 Content-Length 的分块请求也受限。
 - DICOM 支持 8 位 RGB/YBR 和 MONOCHROME1/2（窗变换后转换）；多帧及不支持的像素布局返回 422。压缩 DICOM 可能需要安装 `pylibjpeg`/`pylibjpeg-libjpeg`/`pylibjpeg-openjpeg`。灰度文件可解码不代表模型已在该图像域验证。
-- 存储：`data/api/<UUID>/original` 保留上传原文件，`image.png` 用于推理和预览，`index.sqlite3` 保存图片索引、单眼结果及双眼提交结果。转换 PNG 不带原始 DICOM 患者标签，原始文件仍含原有信息。存储不是公开静态目录。
+- 存储：`data/api/<UUID>/<原文件名主体>__original.<原后缀>` 保留上传原文件，`<原文件名主体>__image.png` 用于推理和预览，`index.sqlite3` 保存图片索引、单眼结果及双眼提交结果。转换 PNG 不带原始 DICOM 患者标签，原始文件仍含原有信息。存储不是公开静态目录。
 - 认证是**单租户服务凭证**。owner 与 patient_id 是业务元数据，不能作为用户身份或多租户隔离机制。不同第三方若需严格隔离，应使用独立实例/存储/凭证，或增加账号与租户权限层。
 - 原文件和结果会持续保留，不自动删除。上线应按实际约定配置数据目录备份、磁盘限额、保留期和清理策略。
 - 给第三方使用时，在反向代理后启用 HTTPS、认证、请求速率及连接限制；只有需要远程访问时才将 host 改为 0.0.0.0。建议代理限制请求体 30 MiB。当前交付是本地实现与演示，未部署到公网。
@@ -201,3 +202,48 @@ The web UI API key is the exact `FUNDUS_API_KEY` configured on that server, with
 ## Advisory image quality and raw response
 
 Image quality no longer blocks disease prediction. New ungradable results have `status=ungradable`, `quality.gradable=false`, and six populated disease predictions. The UI highlights the warning and preview, and keeps the prediction table visible. The footer REST API response button shows the exact JSON from the latest completed request without rerunning inference. Existing saved results from older service versions are preserved; re-run an old image ID to produce predictions under the new behavior.
+
+
+## Upload filenames and no save inference
+
+Image IDs still use UUID v4. New persisted uploads keep the original name in their filenames, for example:
+
+```text
+<data root>/<image UUID>/
+  2026-08-04-14-01-20-722_OS__original.jpg
+  2026-08-04-14-01-20-722_OS__image.png
+```
+
+`filename` is the source basename. `stored_original_filename` and `stored_image_filename` report the actual saved names. Path separators/unsafe characters are sanitized and long names are shortened. Existing UUID directories and older `original` / `image.png` files remain supported; existing IDs are unchanged and files are not renamed retrospectively.
+
+`POST /api/v1/predict` still saves the image and result. For **no persistent image or result storage**, use the new endpoint:
+
+```bash
+export API_BASE=http://18.138.92.89:8056
+export TOKEN='your-server-credential'
+curl --fail-with-body -sS --max-time 120 \
+  "$API_BASE/api/v1/predict/no-save" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./2026-08-04-14-01-20-722_OS.jpg"
+```
+
+This is one upload/inference request, with no image-ID application. The response includes `saved: false`, `image_id: null`, `prediction_id: null`, the source `filename`, IQA and the six disease outputs. There is no database insert and no result-retrieval ID. Models and quality-warning behavior are the same as the persisted endpoint. The API uses default thresholds; authentication, 20 MiB upload limits, DICOM decoding and 25-megapixel limits still apply.
+
+Temporary working files (and multipart spooling when required) may be written to the server's temporary directory. They are cleaned at the end of the request, including decoding/inference failures. This is not a RAM-only processing guarantee; it is a no-retention endpoint. As with normal temporary files, an OS crash or forced process termination cannot guarantee immediate cleanup.
+
+A ready-to-run script combines the entire operation:
+
+```bash
+API_BASE=http://18.138.92.89:8056 TOKEN='your-server-credential' \
+  bash scripts/predict_no_save.sh ./2026-08-04-14-01-20-722_OS.jpg
+```
+
+The remote examples require the updated server deployment. For local Docker, set API_BASE=http://127.0.0.1:5050 instead. Rebuild/recreate the container after copying the updated code to the server:
+
+```bash
+docker compose --env-file .env.docker up -d --build --wait
+# NVIDIA GPU alternative:
+docker compose --env-file .env.docker \
+  -f compose.yaml -f compose.gpu.yaml up -d --build --wait
+```
+

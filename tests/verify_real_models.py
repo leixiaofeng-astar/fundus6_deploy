@@ -44,4 +44,14 @@ with tempfile.TemporaryDirectory() as data:
         response = client.post('/api/v1/predict', headers=headers, files={'file': (samples[0].name, samples[0].read_bytes())})
         assert response.status_code == 200, response.text
         assert len(response.json()['diseases']) == 6
-        print('Real-model API integration and baseline parity: passed')
+        saved_output = response.json()
+        before = sorted(str(p.relative_to(data)) for p in Path(data).rglob('*'))
+        response = client.post('/api/v1/predict/no-save', headers=headers,
+            files={'file': (samples[0].name, samples[0].read_bytes())})
+        assert response.status_code == 200, response.text
+        transient = response.json()
+        assert transient['saved'] is False and transient['image_id'] is None and transient['prediction_id'] is None
+        assert transient['diseases'] == saved_output['diseases']
+        assert transient['quality'] == saved_output['quality']
+        assert sorted(str(p.relative_to(data)) for p in Path(data).rglob('*')) == before
+        print('Real-model persisted and no-save API integration: passed')

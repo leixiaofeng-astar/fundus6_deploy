@@ -84,3 +84,8 @@ curl --fail-with-body -sS --max-time 120 \
 ```
 
 See [README_DOCKER.md](README_DOCKER.md) for requirements, GPU validation, persistent volumes and lifecycle commands. Ungradable images still return all six disease predictions with a quality warning.
+
+
+## File names and transient inference
+
+New saved files include the sanitized source filename in their UUID directory. UUID generation is unchanged; older image records remain readable. Use `POST /api/v1/predict/no-save` or `scripts/predict_no_save.sh` to upload once and receive all predictions without retaining uploaded images or results. Temporary processing files are cleaned after each request. See [README_API.md](README_API.md#upload-filenames-and-no-save-inference) for examples and storage details.

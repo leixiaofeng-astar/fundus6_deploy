@@ -14,6 +14,9 @@ import json
 import logging
 import os
 import sqlite3
+import re
+import unicodedata
+from tempfile import TemporaryDirectory
 
 from fastapi import FastAPI, Depends, File, HTTPException, Request, Security, UploadFile
 from fastapi.security import APIKeyHeader, HTTPBearer
@@ -108,6 +111,8 @@ class LegacyRequest(BaseModel):
 class ImageInfo(BaseModel):
     image_id: UUID
     filename: str
+    stored_original_filename: Optional[str] = None
+    stored_image_filename: Optional[str] = None
     width: int
     height: int
     size_bytes: int
@@ -138,6 +143,47 @@ class PredictionResult(BaseModel):
     model_version: str
     iqa_version: str
     created_at: str
+
+
+class TransientPredictionResult(PredictionResult):
+    image_id: Optional[UUID] = None
+    prediction_id: Optional[UUID] = None
+    saved: bool = False
+    filename: str
+
+
+def upload_names(filename):
+    original = (filename or 'image').replace('\\', '/').split('/')[-1] or 'image'
+    safe = re.sub(r'[^\w.\-]+', '_', unicodedata.normalize('NFKC', original)).strip(' ._') or 'image'
+    # Cap bytes, not characters, to stay below filesystem limits with Unicode.
+    safe = safe.encode('utf-8')[:160].decode('utf-8', errors='ignore').rstrip(' ._') or 'image'
+    suffix = Path(safe).suffix[:12]
+    stem = safe[:-len(Path(safe).suffix)] if Path(safe).suffix else safe
+    stem = stem or 'image'
+    return original, stem+'__original'+suffix, stem+'__image.png'
+
+
+def write_upload(upload, target):
+    size, digest = 0, hashlib.sha256()
+    with target.open('wb') as out:
+        while chunk := upload.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD:
+                raise HTTPException(413, 'Image exceeds 20 MiB limit')
+            digest.update(chunk)
+            out.write(chunk)
+    if not size:
+        raise HTTPException(422, 'Empty image')
+    return size, digest.hexdigest()
+
+
+def normalize_upload(original, target):
+    try:
+        im = read_image(original)
+        im.save(target)
+        return im.width, im.height
+    except Exception as error:
+        raise HTTPException(422, 'Invalid or unsupported image/DICOM') from error
 
 
 class Store:
@@ -173,32 +219,25 @@ class Store:
         return json.loads(row[0])
 
     def path(self, image_id):
-        self.image(image_id)
-        return self.root / str(UUID(str(image_id))) / 'image.png'
+        metadata = self.image(image_id)
+        name = metadata.get('stored_image_filename', 'image.png')
+        if not name or Path(name).name != name or '\\' in name:
+            raise HTTPException(500, 'Invalid stored image filename')
+        return self.root / str(UUID(str(image_id))) / name
 
     def upload(self, upload, extra=None):
         image_id = str(uuid4())
         directory = self.root / image_id
         directory.mkdir(mode=0o700)
         try:
-            size, digest = 0, hashlib.sha256()
-            with (directory / 'original').open('wb') as out:
-                while chunk := upload.file.read(1024 * 1024):
-                    size += len(chunk)
-                    if size > MAX_UPLOAD:
-                        raise HTTPException(413, 'Image exceeds 20 MiB limit')
-                    digest.update(chunk)
-                    out.write(chunk)
-            if not size:
-                raise HTTPException(422, 'Empty image')
-            try:
-                im = read_image(directory / 'original')
-                im.save(directory / 'image.png')  # no source DICOM metadata in inference image
-            except Exception as e:
-                raise HTTPException(422, 'Invalid or unsupported image/DICOM') from e
-            metadata = {'image_id': image_id, 'filename': (upload.filename or 'image').replace('\\', '/').split('/')[-1],
-                        'width': im.width, 'height': im.height, 'size_bytes': size,
-                        'sha256': digest.hexdigest(), 'created_at': now()}
+            filename, original_name, image_name = upload_names(upload.filename)
+            original_path, image_path = directory / original_name, directory / image_name
+            size, digest = write_upload(upload, original_path)
+            width, height = normalize_upload(original_path, image_path)
+            metadata = {'image_id': image_id, 'filename': filename,
+                        'stored_original_filename': original_name, 'stored_image_filename': image_name,
+                        'width': width, 'height': height, 'size_bytes': size,
+                        'sha256': digest, 'created_at': now()}
             if extra:
                 metadata.update(extra)
             with self.db() as db:
@@ -308,6 +347,29 @@ def create_app(model_service=None, data_dir=None, api_key=None):
         image = app.state.store.upload(file)
         return predict(PredictRequest(image_id=image['image_id']))
 
+    @app.post('/api/v1/predict/no-save', response_model=TransientPredictionResult, dependencies=auth,
+              summary='Upload and infer without persistent images, IDs or database records')
+    def upload_and_predict_no_save(file: UploadFile = File(...)):
+        try:
+            # No Store upload/save calls. Temporary working files are removed on
+            # success, decoding error, inference error or validation error.
+            with TemporaryDirectory(prefix='fundus-inference-') as temporary:
+                directory = Path(temporary)
+                original_path, image_path = directory / 'upload', directory / 'image.png'
+                write_upload(file, original_path)
+                normalize_upload(original_path, image_path)
+                try:
+                    output = app.state.models.predict(image_path, {}, 0.67)
+                    return TransientPredictionResult.model_validate({
+                        **output, 'image_id': None, 'prediction_id': None,
+                        'saved': False, 'filename': upload_names(file.filename)[0], 'created_at': now()
+                    }).model_dump(mode='json')
+                except Exception as error:
+                    LOG.exception('Transient inference failed')
+                    raise HTTPException(500, 'Model inference failed; temporary files have been removed') from error
+        finally:
+            file.file.close()
+
     @app.post('/api/v1/image', status_code=200, dependencies=auth, openapi_extra={
         'requestBody': {'required': True, 'content': {'multipart/form-data': {'schema': {
             'type': 'object', 'required': ['filename', 'content', 'owner'], 'properties': {
@@ -367,7 +429,7 @@ def create_app(model_service=None, data_dir=None, api_key=None):
         for side in ('left', 'right'):
             value = body.image.get(side, '')
             response[f'{side}_image_id'] = UUID(value).hex if value else ''
-            response[f'{side}_image_filename'] = f'{UUID(value).hex}.png' if value else ''
+            response[f'{side}_image_filename'] = app.state.store.image(value).get('stored_image_filename', 'image.png') if value else ''
         with app.state.store.db() as db:
             db.execute('INSERT INTO submissions VALUES (?,?)', (response['id'], json.dumps(response, allow_nan=False)))
         return response
