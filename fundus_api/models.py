@@ -12,7 +12,7 @@ from .imaging import read_image
 
 ROOT = Path(os.getenv('FUNDUS_MODEL_ROOT', Path(__file__).resolve().parents[1]))
 DISEASES = ('dr', 'glaucoma', 'amd', 'myopia', 'cataract', 'dme')
-THRESHOLDS = dict(zip(DISEASES, (0.193, 0.121, 0.017, 0.010, 0.292, 0.034)))
+THRESHOLDS = {'dr': 0.377, 'glaucoma': 0.458, 'amd': 0.052, 'myopia': 0.063, 'cataract': 0.670, 'dme': 0.177}
 
 
 def threshold_value(value):
